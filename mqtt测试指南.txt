@@ -1,0 +1,35 @@
+mosquitto安装
+执行包中的mosquitto，所有配置默认即可，注意，需要留意安装包安装的位置，将包含整个软件的文件夹路径复制下来，然后搜索环境变量，将该路径放进系统变量的path里面，重开cmd，就可以执行mosquitto命令了
+
+mqtt硬件测试
+在自己的电脑上，win+r打开cmd，然后输入：mosquitto_sub -h 8.148.238.88 -p 11115 -t "warning-cloumn/status" -u iotuser -P studentIotTest，此时电脑就作为订阅者，cmd持续监听
+硬件作为发布者，连接wifi开始发布消息，以下为对应信息：
+ip：8.148.238.88
+端口：11115
+主题：warning-cloumn/status
+用户：iotuser
+密码：studentIotTest
+发布者发布信息后，订阅者是可以显示出发送的信息的，如果报错，则另开一个cmd，执行以下代码：
+mosquitto_pub -h 8.148.238.88 -p 11115 -t "warning-column/status" -m "hello java" -u iotuser -P studentIotTest
+mosquitto_sub -h 8.148.238.88 -p 11115 -t "column/1111/to-soft" -u iotuser -P studentIotTest
+该代码表示发布一个hello java的信息给订阅者，如果能在订阅者cmd看到此消息，则证明服务器配置没问题
+
+以上代码作用于，硬件作为发布者，服务器作为订阅者的状态，也就是说，硬件向服务器发起请求
+除此之外，还需要设计一个反向的请求，也就是服务器作为发布者，因为除了定时上报异常外，还需要完成服务器主动向硬件请求状态的情况，此时硬件就是订阅者
+当前情况下，使用：mosquitto_pub -h 8.148.238.88 -p 11115 -t "warning-column/status" -m "hello java" -u iotuser -P studentIotTest就可以向硬件发送信息以测试
+
+注意！！！测试时不要使用中文，cmd天然不支持中文，成功发送也会乱码
+
+约定
+
+1、硬件单向上报
+需要注意的是，一下发送格式是我已经确认好的，需要双方都遵从json格式进行通信（在构造json的时候，键值必须使用双引号，不允许单引号）：
+id统一使用纯数字，大约四五位即可
+硬件定时上报格式：{ "id": "1234", "status": "nomal", "power": "90", "updataTime": "2026-02-08 18:07:16" }，最后的时间是一个timestamp类型，所有的值都需要封装成字符串再发送过来
+硬件异常报警格式：{ "id": "1234", "status": "error", "updateTime": "2026-02-08 18:07:16" }，状态只有nomal与error两种情况
+硬件主题格式：column/设备id/to-soft
+我数据库的设备id目前仅有1111与2222，如果需要更多跟我说就好
+
+2、软件请求数据
+软件请求主题：column/设备id/to-hard，硬件需要订阅该主题，该主题会发送一个json，该键值对有一个flag键，记录对应值
+软件返回主题：column/设备id/to-soft/flag对应的值，需要发送以下内容
