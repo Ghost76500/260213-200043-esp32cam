@@ -8,6 +8,7 @@
 static WiFiClient gWifiClient;
 static PubSubClient gMqttClient(gWifiClient);
 static MqttFlagHandler gFlagHandler = nullptr;
+static MqttRawMessageHandler gRawHandler = nullptr;
 static uint32_t gLastReconnectTryMs = 0;
 
 String mqttTopicToHard() {
@@ -45,6 +46,10 @@ static void onMqttMessage(char *topic, byte *payload, unsigned int length) {
   Serial.print(topic);
   Serial.print(" payload=");
   Serial.println(body);
+
+  if (gRawHandler != nullptr) {
+    gRawHandler(String(topic), body);
+  }
 
   String flag = extractFlag(body);
   if (gFlagHandler != nullptr) {
@@ -100,7 +105,7 @@ void mqttLoop() {
 
 String mqttBuildStatusNormalJson(const String &power, const String &timeText) {
   return String("{\"id\":\"") + MqttCfg::DEVICE_ID +
-         "\",\"status\":\"正常\",\"power\":\"" + power +
+         "\",\"status\":\"error\",\"power\":\"" + power +
          "\",\"updataTime\":\"" + timeText + "\"}";
 }
 
@@ -165,4 +170,8 @@ bool mqttSubscribeRaw(const String &topic) {
   Serial.print(" result=");
   Serial.println(ok ? "ok" : "fail");
   return ok;
+}
+
+void mqttSetRawMessageHandler(MqttRawMessageHandler handler) {
+  gRawHandler = handler;
 }

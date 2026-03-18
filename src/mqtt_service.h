@@ -2,6 +2,7 @@
 #include <Arduino.h>
 
 typedef void (*MqttFlagHandler)(const String &flag, const String &topic, const String &payload);
+typedef void (*MqttRawMessageHandler)(const String &topic, const String &payload);
 
 void mqttInit(MqttFlagHandler handler);
 void mqttLoop();
@@ -13,6 +14,7 @@ bool mqttPublishStatusError(const String &timeText);
 bool mqttPublishReplyByFlag(const String &flag, const String &jsonPayload);
 bool mqttPublishRaw(const String &topic, const String &payload);
 bool mqttSubscribeRaw(const String &topic);
+void mqttSetRawMessageHandler(MqttRawMessageHandler handler);
 String mqttBuildStatusNormalJson(const String &power, const String &timeText);
 
 String mqttTopicToHard();
