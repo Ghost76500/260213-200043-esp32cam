@@ -235,62 +235,41 @@ void startCameraServer();
 void setupLedFlash();
 
 static bool initSdCard1Bit() {
-  struct SdMode {
-    bool mode1bit;
-    const char *name;
-  };
+  SD_MMC.end();
+  delay(20);
 
-  const SdMode modes[] = {
-    {true, "1-bit"},
-    {false, "4-bit"},
-  };
+  Serial.println("[SD] init start (SD_MMC 1-bit mode)");
 
-  for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
-    SD_MMC.end();
-    delay(20);
-
-    Serial.print("[SD] init start (SD_MMC ");
-    Serial.print(modes[i].name);
-    Serial.println(" mode)");
-
-    bool ok = SD_MMC.begin("/sdcard", modes[i].mode1bit);
-    if (!ok) {
-      Serial.print("[SD] mount failed (");
-      Serial.print(modes[i].name);
-      Serial.println(")");
-      continue;
-    }
-
-    uint8_t cardType = SD_MMC.cardType();
-    if (cardType == CARD_NONE) {
-      Serial.print("[SD] no card (");
-      Serial.print(modes[i].name);
-      Serial.println(")");
-      SD_MMC.end();
-      continue;
-    }
-
-    uint64_t cardSizeMB = SD_MMC.cardSize() / (1024ULL * 1024ULL);
-    Serial.print("[SD] mount ok, mode=");
-    Serial.print(modes[i].name);
-    Serial.print(" type=");
-    if (cardType == CARD_MMC) {
-      Serial.print("MMC");
-    } else if (cardType == CARD_SD) {
-      Serial.print("SDSC");
-    } else if (cardType == CARD_SDHC) {
-      Serial.print("SDHC/SDXC");
-    } else {
-      Serial.print("UNKNOWN");
-    }
-    Serial.print(", size=");
-    Serial.print((unsigned long)cardSizeMB);
-    Serial.println("MB");
-    return true;
+  const bool mode1bit = true;
+  bool ok = SD_MMC.begin("/sdcard", mode1bit);
+  if (!ok) {
+    Serial.println("[SD] mount failed (1-bit)");
+    Serial.println("[SD] check card insert, card format(FAT32/exFAT), and pull-up resistors.");
+    return false;
   }
 
-  Serial.println("[SD] all init modes failed. Check card insert, card format(FAT32/exFAT), and pull-up resistors.");
-  return false;
+  uint8_t cardType = SD_MMC.cardType();
+  if (cardType == CARD_NONE) {
+    Serial.println("[SD] no card (1-bit)");
+    SD_MMC.end();
+    return false;
+  }
+
+  uint64_t cardSizeMB = SD_MMC.cardSize() / (1024ULL * 1024ULL);
+  Serial.print("[SD] mount ok, mode=1-bit type=");
+  if (cardType == CARD_MMC) {
+    Serial.print("MMC");
+  } else if (cardType == CARD_SD) {
+    Serial.print("SDSC");
+  } else if (cardType == CARD_SDHC) {
+    Serial.print("SDHC/SDXC");
+  } else {
+    Serial.print("UNKNOWN");
+  }
+  Serial.print(", size=");
+  Serial.print((unsigned long)cardSizeMB);
+  Serial.println("MB");
+  return true;
 }
 
 // 生成当前运行时间字符串（以固定日期 + 运行时分秒形式返回）
