@@ -4,6 +4,7 @@
 
 class RecorderManager {
  public:
+  void init();
   bool start(const String &path);
   void tick(uint32_t nowMs);
   bool stop();

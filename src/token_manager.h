@@ -4,6 +4,7 @@
 
 class TokenManager {
  public:
+  void init();
   bool hasToken() const;
   const String &getAuthHeader() const;
   bool requestToken(bool forceNow = false);

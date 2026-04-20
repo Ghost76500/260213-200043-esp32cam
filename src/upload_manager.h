@@ -12,6 +12,7 @@ struct UploadManagerResult {
 
 class UploadManager {
  public:
+  void init();
   void start(const String &filePath);
   bool isPending() const;
   bool process(uint32_t nowMs, const String &authHeader, UploadManagerResult *outResult);

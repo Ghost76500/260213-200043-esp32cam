@@ -3,6 +3,13 @@
 #include "app_config.h"
 #include "avi_recorder.h"
 
+void RecorderManager::init() {
+  active_ = false;
+  finished_ = false;
+  startMs_ = 0;
+  path_ = "";
+}
+
 bool RecorderManager::start(const String &path) {
   if (path.length() == 0) {
     return false;
@@ -25,11 +32,16 @@ void RecorderManager::tick(uint32_t nowMs) {
     return;
   }
 
+  int32_t elapsed = (int32_t)(nowMs - startMs_);
+  if (elapsed < 0) {
+    return;
+  }
+
   if (aviRecorderIsRecording()) {
     aviRecorderTick();
   }
 
-  if (nowMs - startMs_ >= AppCfg::Record::DURATION_MS) {
+  if ((uint32_t)elapsed >= AppCfg::Record::DURATION_MS) {
     stop();
   }
 }

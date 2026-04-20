@@ -4,6 +4,12 @@
 #include "mqtt_config.h"
 #include "video_uploader.h"
 
+void UploadManager::init() {
+  pending_ = false;
+  lastTryMs_ = 0;
+  filePath_ = "";
+}
+
 void UploadManager::start(const String &filePath) {
   filePath_ = filePath;
   pending_ = filePath_.length() > 0;

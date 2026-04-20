@@ -9,88 +9,47 @@
 #include "token_manager.h"
 #include "upload_manager.h"
 #include "recorder_manager.h"
+#include "app_runtime_utils.h"
+#include "datapack_receive.h"
 
-#include "FS.h"
-#include "SD_MMC.h"
-
-uint8_t kNormalPower_t = 0;
+//uint8_t kNormalPower_t = 98;
 
 static TokenManager gTokenManager;
 static UploadManager gUploadManager;
 static RecorderManager gRecorderManager;
 static bool gUploadStartedFromCurrentRecording = false;
+static bool gRecorderUploadFlowEnabled = false;
+static bool gSdReady = false;
+static constexpr uint8_t kWarningHongwaiCode = 0xAA;
+static constexpr uint8_t kWarningQingxieCode = 0xBB;
+static constexpr uint32_t kRecordTriggerCooldownMs = 60UL * 1000UL;
+static uint32_t gLastRecordTriggerMs = 0;
+static bool gLastWarningActive = false;
 
 // 启动摄像头 HTTP 服务（在 app_httpd.cpp 中实现）
 void startCameraServer();
 // 初始化补光灯控制（在 app_httpd.cpp 中实现，具体取决于板级定义）
 void setupLedFlash();
+void gRecorder_Upload(void); // 视频上传函数声明，供 RecorderManager 在录制完成后调用以触发上传流程
 
-static String nextRecordPath() {
-  for (uint16_t i = 1; i <= 9999; ++i) {
-    char path[32];
-    snprintf(path, sizeof(path), "/record_%04u.avi", i);
-    if (!SD_MMC.exists(path)) {
-      return String(path);
-    }
-  }
-  return String("/record_last.avi");
-}
-
-static String normalPowerText() {
-  if (kNormalPower_t > 100) {
-    kNormalPower_t = 100;
-  }
-  return String(kNormalPower_t);
-}
-
-static bool initSdCard1Bit() {
-  SD_MMC.end();
-  delay(20);
-
-  Serial.println("[SD] init start (SD_MMC 1-bit mode)");
-
-  const bool mode1bit = true;
-  bool ok = SD_MMC.begin("/sdcard", mode1bit);
-  if (!ok) {
-    Serial.println("[SD] mount failed (1-bit)");
-    Serial.println("[SD] check card insert, card format(FAT32/exFAT), and pull-up resistors.");
+static bool tryEnableRecorderUploadFlow(const char *source, uint32_t nowMs, bool bypassCooldown = false) {
+  if (!bypassCooldown && gLastRecordTriggerMs != 0 && (nowMs - gLastRecordTriggerMs < kRecordTriggerCooldownMs)) {
+    Serial.print("[REC] trigger ignored (cooldown), source=");
+    Serial.println(source);
     return false;
   }
 
-  uint8_t cardType = SD_MMC.cardType();
-  if (cardType == CARD_NONE) {
-    Serial.println("[SD] no card (1-bit)");
-    SD_MMC.end();
+  if (gRecorderUploadFlowEnabled || gRecorderManager.isRecording() || gUploadManager.isPending()) {
+    Serial.print("[REC] trigger ignored (busy), source=");
+    Serial.println(source);
     return false;
   }
 
-  uint64_t cardSizeMB = SD_MMC.cardSize() / (1024ULL * 1024ULL);
-  Serial.print("[SD] mount ok, mode=1-bit type=");
-  if (cardType == CARD_MMC) {
-    Serial.print("MMC");
-  } else if (cardType == CARD_SD) {
-    Serial.print("SDSC");
-  } else if (cardType == CARD_SDHC) {
-    Serial.print("SDHC/SDXC");
-  } else {
-    Serial.print("UNKNOWN");
-  }
-  Serial.print(", size=");
-  Serial.print((unsigned long)cardSizeMB);
-  Serial.println("MB");
+  gRecorderUploadFlowEnabled = true;
+  gLastRecordTriggerMs = nowMs;
+  Serial.print("[REC] trigger accepted, source=");
+  Serial.println(source);
   return true;
-}
-
-// 生成当前运行时间字符串（以固定日期 + 运行时分秒形式返回）
-static String nowText() {
-  uint32_t sec = millis() / 1000;
-  uint32_t hh = (sec / 3600) % 24;
-  uint32_t mm = (sec / 60) % 60;
-  uint32_t ss = sec % 60;
-
-  char buf[32];
-  snprintf(buf, sizeof(buf), "2026-02-30 %02lu:%02lu:%02lu", (unsigned long)hh, (unsigned long)mm, (unsigned long)ss);
-  return String(buf);
 }
 
 // MQTT 业务标记请求回调：收到带 flag 的请求后，构造并发布对应回复
@@ -103,7 +62,7 @@ static void onFlagRequest(const String &flag, const String &topic, const String 
   Serial.println(payload);
 
   if (flag.length() > 0) {
-    String reply = mqttBuildStatusNormalJson(normalPowerText(), nowText());
+    String reply = mqttBuildStatusNormalJson(appNormalPowerText(kNormalPower_t), appNowText());
     mqttPublishReplyByFlag(flag, reply);
   }
 }
@@ -113,6 +72,13 @@ void setup() {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
+
+  dataPackInitUart();
+  Serial.println("[PACK] UART2 init: RX=13, TX=4");
+
+  gTokenManager.init();
+  gUploadManager.init();
+  gRecorderManager.init();
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -191,14 +157,6 @@ void setup() {
   setupLedFlash();
 #endif
 
-  bool sdReady = initSdCard1Bit();
-  if (sdReady) {
-    String recordPath = nextRecordPath();
-    if (gRecorderManager.start(recordPath)) {
-      gUploadStartedFromCurrentRecording = false;
-    }
-  }
-
   WiFi.begin(AppCfg::Wifi::SSID, AppCfg::Wifi::PASSWORD);
   WiFi.setSleep(false);
 
@@ -217,41 +175,112 @@ void setup() {
 
   mqttInit(onFlagRequest);
   gTokenManager.requestToken(true);
+  //tryEnableRecorderUploadFlow("boot", millis(), true); // 开机后进行一次录制触发，验证流程并获取初始视频以供后续上传测试使用
 
   if (mqttIsConnected()) {
-    mqttPublishStatusNormal(normalPowerText(), nowText());
+    mqttPublishStatusNormal(appNormalPowerText(kNormalPower_t), appNowText());
   }
 }
 
 // Arduino 主循环：维护 MQTT 连接与业务状态机
 void loop() {
+  // 记录上次心跳上报时间
   static uint32_t lastHeartbeat = 0;
 
+  // 串口解包轮询：收到完整帧后置位，供主循环读取。
+  dataPackPoll();
+  if (dataPackTakeUpdatedFlag()) {
+    uint8_t warningCode = dataPackLatestWarningCode();
+    bool warningActive = (warningCode == kWarningHongwaiCode || warningCode == kWarningQingxieCode);
+
+    Serial.print("[PACK] rx warning=0x");
+    Serial.println(warningCode, HEX);
+
+    // 告警码(0xAA/0xBB)在告警态可触发，实际频率由冷却时间限制。
+    if (warningActive) {
+      tryEnableRecorderUploadFlow("pack-alarm-level", millis());
+    } else if (gLastWarningActive) {
+      Serial.println("[PACK] alarm cleared");
+    } else {
+      Serial.println("[PACK] non-alarm packet ignored");
+    }
+
+    gLastWarningActive = warningActive;
+  }
+
+  // 轮询 MQTT：处理收发并在断开时尝试重连
   mqttLoop();
 
+  // 周期性上报设备状态（心跳）
   uint32_t now = millis();
   if (now - lastHeartbeat >= MqttCfg::HEARTBEAT_INTERVAL_MS) {
     lastHeartbeat = now;
-    mqttPublishStatusNormal(normalPowerText(), nowText());
+    mqttPublishStatusNormal(appNormalPowerText(kNormalPower_t), appNowText());
   }
 
+  gRecorder_Upload();
+
+  delay(10);
+}
+
+void gRecorder_Upload(void)
+{
+  if (!gRecorderUploadFlowEnabled) {
+    return;
+  }
+
+  if (!gSdReady) {
+    gSdReady = appInitSdCard1Bit();
+    if (!gSdReady) {
+      Serial.println("[REC] wait SD ready");
+      return;
+    }
+  }
+
+  uint32_t now = millis();
+
+  // 触发后，若当前为空闲态则启动新一轮录制。
+  if (!gRecorderManager.isRecording() && !gRecorderManager.isFinished() && !gUploadManager.isPending()) {
+    String recordPath = appNextRecordPath();
+    if (gRecorderManager.start(recordPath)) {
+      gUploadStartedFromCurrentRecording = false;
+      Serial.print("[REC] started: ");
+      Serial.println(recordPath);
+      // 录制刚启动后刷新一次时间戳，避免使用启动前的旧 now 触发错误超时判断。
+      now = millis();
+    } else {
+      Serial.println("[REC] start failed");
+      return;
+    }
+  }
+
+  // 驱动录制状态机：按帧写入并在到达时长后停止
   gRecorderManager.tick(now);
+
+  // 录制完成后仅触发一次上传任务
   if (gRecorderManager.isFinished() && !gUploadStartedFromCurrentRecording) {
     gUploadManager.start(gRecorderManager.filePath());
     gUploadStartedFromCurrentRecording = true;
   }
 
+  // token 不可用时持续发起/重试 MQTT token 请求
   if (!gTokenManager.hasToken()) {
     gTokenManager.requestToken(false);
   }
 
+  // 有待上传任务且网络可用时，执行上传流程
   if (gUploadManager.isPending() && WiFi.status() == WL_CONNECTED) {
+    // 若未配置静态鉴权头，则必须先拿到动态 token 才允许上传
     if (String(AppCfg::Upload::STATIC_AUTH_HEADER).length() == 0 && !gTokenManager.hasToken()) {
-      Serial.println("[UPLOAD] wait mqtt token before upload");
-      delay(10);
+      static uint32_t lastWaitTokenLogMs = 0;
+      if (now - lastWaitTokenLogMs >= 2000UL) {
+        Serial.println("[UPLOAD] wait mqtt token before upload");
+        lastWaitTokenLogMs = now;
+      }
       return;
     }
 
+    // UploadManager 按重试间隔决定是否真正发起一次上传
     UploadManagerResult result;
     bool attempted = gUploadManager.process(now, gTokenManager.getAuthHeader(), &result);
     if (attempted) {
@@ -266,13 +295,14 @@ void loop() {
 
       if (result.success) {
         Serial.println("[UPLOAD] success");
+        gRecorderUploadFlowEnabled = false;
+        gRecorderManager.init();
+        gUploadStartedFromCurrentRecording = false;
       } else {
+        // 上传失败后强制刷新 token，供下次重试使用
         gTokenManager.requestToken(true);
         Serial.println("[UPLOAD] failed, will retry");
       }
     }
   }
-
-  //kNormalPower_t++;
-  delay(10);
 }

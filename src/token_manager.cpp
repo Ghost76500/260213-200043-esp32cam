@@ -4,10 +4,22 @@
 #include "mqtt_config.h"
 #include "mqtt_service.h"
 
-extern void mqttSetRawMessageHandler(MqttRawMessageHandler handler);
-
 namespace {
 TokenManager *gTokenManagerInstance = nullptr;
+}
+
+void TokenManager::init() {
+  authHeader_ = "";
+  tokenFlag_ = "";
+  reqTopic_ = "";
+  rspTopic_ = "";
+  requestPending_ = false;
+  awaitingReply_ = false;
+  tokenReady_ = false;
+  lastReqMs_ = 0;
+  reqStartMs_ = 0;
+
+  ensureMqttBinding();
 }
 
 bool TokenManager::hasToken() const {
@@ -81,6 +93,22 @@ void TokenManager::handleRawMqttMessage(const String &topic, const String &paylo
 
   String authHeader = extractJsonStringValue(payload, "Authorization");
   if (authHeader.length() == 0) {
+    authHeader = extractJsonStringValue(payload, "authorization");
+  }
+  if (authHeader.length() == 0) {
+    authHeader = extractJsonStringValue(payload, "token");
+  }
+  if (authHeader.length() == 0) {
+    authHeader = extractJsonStringValue(payload, "access_token");
+  }
+  if (authHeader.length() == 0) {
+    authHeader = extractJsonStringValue(payload, "data");
+  }
+  if (authHeader.length() == 0) {
+    authHeader = extractJsonStringValue(payload, "result");
+  }
+
+  if (authHeader.length() == 0) {
     authHeader = payload;
     authHeader.trim();
     if (authHeader.startsWith("\"") && authHeader.endsWith("\"")) {
@@ -133,6 +161,11 @@ bool TokenManager::requestToken(bool forceNow) {
   }
 
   if (!mqttIsConnected()) {
+    static uint32_t lastNoMqttLogMs = 0;
+    if (now - lastNoMqttLogMs >= 3000UL) {
+      Serial.println("[TOKEN] wait mqtt connected");
+      lastNoMqttLogMs = now;
+    }
     return false;
   }
 
