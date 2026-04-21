@@ -16,6 +16,7 @@ bool mqttPublishRaw(const String &topic, const String &payload);
 bool mqttSubscribeRaw(const String &topic);
 void mqttSetRawMessageHandler(MqttRawMessageHandler handler);
 String mqttBuildStatusNormalJson(const String &power, const String &timeText);
+String mqttBuildStatusErrorJson(const String &timeText);
 
 String mqttTopicToHard();
 String mqttTopicToSoft();

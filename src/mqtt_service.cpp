@@ -105,8 +105,13 @@ void mqttLoop() {
 
 String mqttBuildStatusNormalJson(const String &power, const String &timeText) {
   return String("{\"id\":\"") + MqttCfg::DEVICE_ID +
-         "\",\"status\":\"error\",\"power\":\"" + power +
+         "\",\"status\":\"normal\",\"power\":\"" + power +
          "\",\"updataTime\":\"" + timeText + "\"}";
+}
+
+String mqttBuildStatusErrorJson(const String &timeText) {
+  return String("{\"id\":\"") + MqttCfg::DEVICE_ID +
+         "\",\"status\":\"error\",\"updateTime\":\"" + timeText + "\"}";
 }
 
 bool mqttPublishStatusNormal(const String &power, const String &timeText) {
@@ -125,8 +130,7 @@ bool mqttPublishStatusNormal(const String &power, const String &timeText) {
 bool mqttPublishStatusError(const String &timeText) {
   if (!gMqttClient.connected()) return false;
 
-  String json = String("{\"id\":\"") + MqttCfg::DEVICE_ID +
-                "\",\"status\":\"error\",\"updateTime\":\"" + timeText + "\"}";
+  String json = mqttBuildStatusErrorJson(timeText);
 
   bool ok = gMqttClient.publish(mqttTopicToSoft().c_str(), json.c_str());
   Serial.print("[MQTT] TX ");

@@ -25,6 +25,7 @@ static constexpr uint8_t kWarningQingxieCode = 0xBB;
 static constexpr uint32_t kRecordTriggerCooldownMs = 60UL * 1000UL;
 static uint32_t gLastRecordTriggerMs = 0;
 static bool gLastWarningActive = false;
+static bool gDeviceErrorState = false;
 
 // 启动摄像头 HTTP 服务（在 app_httpd.cpp 中实现）
 void startCameraServer();
@@ -52,6 +53,20 @@ static bool tryEnableRecorderUploadFlow(const char *source, uint32_t nowMs, bool
   return true;
 }
 
+static bool publishCurrentStatus() {
+  if (gDeviceErrorState) {
+    return mqttPublishStatusError(appNowText());
+  }
+  return mqttPublishStatusNormal(appNormalPowerText(kNormalPower_t), appNowText());
+}
+
+static String buildCurrentStatusJson() {
+  if (gDeviceErrorState) {
+    return mqttBuildStatusErrorJson(appNowText());
+  }
+  return mqttBuildStatusNormalJson(appNormalPowerText(kNormalPower_t), appNowText());
+}
+
 // MQTT 业务标记请求回调：收到带 flag 的请求后，构造并发布对应回复
 static void onFlagRequest(const String &flag, const String &topic, const String &payload) {
   Serial.print("[APP] flag request, topic=");
@@ -62,7 +77,7 @@ static void onFlagRequest(const String &flag, const String &topic, const String 
   Serial.println(payload);
 
   if (flag.length() > 0) {
-    String reply = mqttBuildStatusNormalJson(appNormalPowerText(kNormalPower_t), appNowText());
+    String reply = buildCurrentStatusJson();
     mqttPublishReplyByFlag(flag, reply);
   }
 }
@@ -178,7 +193,7 @@ void setup() {
   //tryEnableRecorderUploadFlow("boot", millis(), true); // 开机后进行一次录制触发，验证流程并获取初始视频以供后续上传测试使用
 
   if (mqttIsConnected()) {
-    mqttPublishStatusNormal(appNormalPowerText(kNormalPower_t), appNowText());
+    publishCurrentStatus();
   }
 }
 
@@ -195,6 +210,14 @@ void loop() {
 
     Serial.print("[PACK] rx warning=0x");
     Serial.println(warningCode, HEX);
+
+    bool nextErrorState = warningActive;
+    if (nextErrorState != gDeviceErrorState) {
+      gDeviceErrorState = nextErrorState;
+      if (mqttIsConnected()) {
+        publishCurrentStatus();
+      }
+    }
 
     // 告警码(0xAA/0xBB)在告警态可触发，实际频率由冷却时间限制。
     if (warningActive) {
@@ -215,7 +238,7 @@ void loop() {
   uint32_t now = millis();
   if (now - lastHeartbeat >= MqttCfg::HEARTBEAT_INTERVAL_MS) {
     lastHeartbeat = now;
-    mqttPublishStatusNormal(appNormalPowerText(kNormalPower_t), appNowText());
+    publishCurrentStatus();
   }
 
   gRecorder_Upload();
